@@ -62,6 +62,7 @@
 #include <ros/ros.h>
 #include <ros/callback_queue.h>
 #include <std_msgs/Int32.h>
+#include <sensor_msgs/Imu.h>
 #include <sensor_msgs/PointCloud2.h>
 #include <sensor_msgs/point_cloud_conversion.h>
 #include <image_transport/image_transport.h>
@@ -108,6 +109,7 @@ uint32_t g_dFrames = 0;
 
 bool g_bDeviceFound = false;
 
+ros::Publisher pub_accel;
 ros::Publisher pub_cloud;
 ros::Publisher pub_rgb_info;
 ros::Publisher pub_depth_info;
@@ -127,6 +129,8 @@ cv::Mat cv_img_rgb; // Open CV image containers
 cv::Mat cv_img_yuy2;
 cv::Mat cv_img_mono;
 cv::Mat cv_img_depth;
+
+sensor_msgs::Imu imu_msg;
 
 std_msgs::Int32 test_int;
 
@@ -171,10 +175,10 @@ int color_frame_rate;
 
 DepthSense::DepthNode::CameraMode depthMode(const std::string& depth_mode_str)
 {
-    if ( depth_mode_str == "long" )
-        return DepthNode::CAMERA_MODE_LONG_RANGE;
-    else // if ( depth_mode_str == "close" )
-        return DepthNode::CAMERA_MODE_CLOSE_MODE;
+  if ( depth_mode_str == "long" )
+    return DepthNode::CAMERA_MODE_LONG_RANGE;
+  else // if ( depth_mode_str == "close" )
+    return DepthNode::CAMERA_MODE_CLOSE_MODE;
 }
 
 DepthSense::FrameFormat depthFrameFormat(const std::string& depth_frame_format_str)
@@ -268,6 +272,7 @@ void onNewColorSample(ColorNode node, ColorNode::NewSampleReceivedData data)
 
   // Ensure that all the images and camera info are timestamped and have the proper frame id
   img_rgb.header.stamp = ros::Time::now();
+  img_rgb.header.seq   = g_cFrames;
   img_mono.header      = img_rgb.header;
   rgb_info.header      = img_rgb.header;
 
@@ -453,8 +458,6 @@ void onNewDepthSample(DepthNode node, DepthNode::NewSampleReceivedData data)
   current_cloud->is_dense = true;
   current_cloud->points.resize(w * h);
 
-  ++g_dFrames;
-
   // Dump depth map on image message, though we must do some post-processing for saturated pixels
   std::memcpy(img_depth.data.data(), data.depthMapFloatingPoint, img_depth.data.size());
 
@@ -529,12 +532,32 @@ void onNewDepthSample(DepthNode node, DepthNode::NewSampleReceivedData data)
   // Convert current_cloud to PointCloud2 and publish
   pcl::toROSMsg(*current_cloud, cloud);
 
-  img_depth.header.stamp = ros::Time::now();
-  depth_info.header      = img_depth.header;
+  // Accelerometer data
+  double acc_x = (double)data.acceleration.x;
+  double acc_y = (double)data.acceleration.y;
+  double acc_z = (double)data.acceleration.z;
 
+  imu_msg.orientation.x = atan2(-acc_x, sqrt(acc_y*acc_y + acc_z*acc_z));
+  imu_msg.orientation.y = atan2(-acc_z, sqrt(acc_x*acc_x + acc_y*acc_y));
+
+  imu_msg.linear_acceleration.x = acc_x;
+  imu_msg.linear_acceleration.y = acc_y;
+  imu_msg.linear_acceleration.z = acc_z;
+
+  // Update headers and publish all collected data
+  img_depth.header.stamp = ros::Time::now();
+  img_depth.header.seq   = g_dFrames;
+  cloud.header.stamp     = img_depth.header.stamp;
+  cloud.header.seq       = img_depth.header.seq;
+  depth_info.header      = img_depth.header;
+  imu_msg.header         = img_depth.header;
+
+  pub_accel.publish(imu_msg);
   pub_cloud.publish(cloud);
   pub_depth.publish(img_depth);
   pub_depth_info.publish(depth_info);
+
+  ++g_dFrames;
 }
 
 /*----------------------------------------------------------------------------*/
@@ -591,6 +614,7 @@ void configureDepthNode()
   g_dnode.setEnableUvMap(true);
   g_dnode.setEnableVerticesFloatingPoint(true);
   g_dnode.setEnableDepthMapFloatingPoint(true);
+  g_dnode.setEnableAccelerometer(true);
 
   g_dnode.setConfidenceThreshold(confidence_threshold);
 
@@ -842,12 +866,10 @@ int main(int argc, char* argv[])
   if (nh.getParam("rgb_optical_frame", optical_frame))
   {
     img_rgb.header.frame_id = optical_frame.c_str();
-    img_mono.header.frame_id = optical_frame.c_str();
   }
   else
   {
     img_rgb.header.frame_id = "/softkinetic_rgb_optical_frame";
-    img_mono.header.frame_id = "/softkinetic_rgb_optical_frame";
   }
 
   if (nh.getParam("depth_optical_frame", optical_frame))
@@ -978,6 +1000,7 @@ int main(int argc, char* argv[])
   pub_depth = it.advertise("depth/image_raw", 1);
   pub_depth_info = nh.advertise<sensor_msgs::CameraInfo>("depth/camera_info", 1);
   pub_rgb_info = nh.advertise<sensor_msgs::CameraInfo>("rgb/camera_info", 1);
+  pub_accel = nh.advertise<sensor_msgs::Imu>("accelerations", 1, false);
 
   std::string calibration_file;
   if (nh.getParam("rgb_calibration_file", calibration_file))
