@@ -51,7 +51,7 @@
       </inertial>
     </link>
 
-    <!-- Depth and depth optical frames, also childs of RGB frame link -->
+    <!-- Depth and depth optical frames, also children of RGB frame link -->
     <joint name="${name}_depth_joint" type="fixed">
       <origin xyz="0.0 -0.026 0.0" rpy="0.0 0.0 0.0"/>
       <parent link="${name}_rgb_frame"/>
