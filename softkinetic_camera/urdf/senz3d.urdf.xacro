@@ -9,7 +9,7 @@
     <!-- Add RGB and RGB optical frames -->
     <joint name="${name}_rgb_joint" type="fixed">
       <!-- RGB joint is the base of the tf tree, as for Kinect -->
-      <insert_block name="origin"/>
+      <xacro:insert_block name="origin"/>
       <parent link="${parent}"/>
       <child link="${name}_rgb_frame"/>
     </joint>
